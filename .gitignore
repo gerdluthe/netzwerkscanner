@@ -1,0 +1,22 @@
+# build output
+/dist/
+*.exe
+*.apk
+*.aab
+*.app/
+*.zip
+*.tar.xz
+*.tar.gz
+/netzscan
+fyne-cross/
+
+# generated Windows resources (created by build scripts / CI)
+*.syso
+
+# local sandbox module files
+go.local.mod
+go.local.sum
+
+.DS_Store
+.idea/
+.vscode/

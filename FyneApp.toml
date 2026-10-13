@@ -1,0 +1,11 @@
+Website = "https://github.com/"
+
+[Details]
+  Icon = "Icon.png"
+  Name = "NetzScan"
+  ID = "de.netzscan.app"
+  Version = "1.1.0"
+  Build = 1
+
+[Release]
+  BuildName = "NetzScan"

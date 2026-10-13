@@ -1,0 +1,155 @@
+name: Build
+
+# Builds NetzScan for Windows, macOS, Android and Linux.
+#  - every push / pull request: binaries are attached to the workflow run (Actions tab → run → "Artifacts")
+#  - pushing a tag like v1.2.0: additionally a GitHub Release with all files is created
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_ID: de.netzscan.app
+  APP_NAME: NetzScan
+  FYNE_TOOLS: fyne.io/tools/cmd/fyne@v1.7.3
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF#refs/tags/v}"
+          else
+            V="1.1.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows (x64, native Win32 UI)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
+      - name: Resolve modules
+        run: go mod tidy
+      - name: Embed manifest and icon
+        run: go run github.com/akavel/rsrc@v0.10.2 -manifest netzscan.manifest -ico app.ico -arch amd64 -o rsrc_windows_amd64.syso
+      - name: Build
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.appVersion=${{ needs.version.outputs.version }}" -o dist/NetzScan.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetzScan-Windows-x64
+          path: dist/NetzScan.exe
+
+  macos:
+    name: macOS (Apple Silicon)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
+      - name: Resolve modules
+        run: go mod tidy
+      - name: Install fyne tool
+        run: go install ${{ env.FYNE_TOOLS }}
+      - name: Package .app
+        run: |
+          fyne package -os darwin -icon Icon.png -name "$APP_NAME" -app-id "$APP_ID" \
+            -app-version "${{ needs.version.outputs.version }}" -app-build "${{ needs.version.outputs.build }}" -release
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "dist/NetzScan-macOS-arm64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetzScan-macOS-arm64
+          path: dist/NetzScan-macOS-arm64.zip
+
+  android:
+    name: Android (APK)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
+      - name: Resolve modules
+        run: go mod tidy
+      - name: Install fyne tool
+        run: go install ${{ env.FYNE_TOOLS }}
+      - name: Package .apk
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "Using NDK: $ANDROID_NDK_HOME"
+          fyne package -os android -icon Icon.png -name "$APP_NAME" -app-id "$APP_ID" \
+            -app-version "${{ needs.version.outputs.version }}" -app-build "${{ needs.version.outputs.build }}"
+          mkdir -p dist
+          mv "$APP_NAME.apk" dist/NetzScan-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetzScan-Android
+          path: dist/NetzScan-Android.apk
+
+  linux:
+    name: Linux (x64)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+      - name: Resolve modules
+        run: go mod tidy
+      - name: Build
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X main.appVersion=${{ needs.version.outputs.version }}" -o dist/netzscan .
+          tar -C dist -czf dist/NetzScan-Linux-x64.tar.gz netzscan
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetzScan-Linux-x64
+          path: dist/NetzScan-Linux-x64.tar.gz
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, android, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
